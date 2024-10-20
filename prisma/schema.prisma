@@ -12,6 +12,7 @@ model User {
   name         String
   email        String @unique
   phone_number String
+  password     String
 
   rec_status Boolean   @default(true)
   created_at DateTime  @default(now())
