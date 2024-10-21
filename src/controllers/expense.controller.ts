@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
+import { generateBalanceSheet } from "../utils/sheet-manager";
 
 const prisma = new PrismaClient();
 
@@ -268,6 +269,46 @@ class ExpenseController {
       return res
         .status(500)
         .json({ message: "Server error: Unable to retrieve user expenses." });
+    }
+  }
+
+  async getBalanceSheet(req: Request, res: Response): Promise<any> {
+    // Extract user email from the authenticated request
+    const { email } = (<any>req).user;
+
+    try {
+      // Find the user by their email in the database
+      const user = await prisma.user.findUnique({ where: { email } });
+
+      // If user not found, send an error response
+      if (!user) {
+        return res
+          .status(404)
+          .json({ message: "User not found. Please register first." });
+      }
+
+      // Fetch all expenses linked to the user, including related user and expense details
+      const userExpenses = await prisma.userExpense.findMany({
+        where: { user_id: user.id },
+        include: { user: true, expense: true },
+      });
+
+      // Fetch all expenses in the system, including details of the user who paid and user-expense relations
+      const allExpenses = await prisma.expense.findMany({
+        include: { paid_by: true, UserExpense: true },
+      });
+
+      // Generate the balance sheet by processing user expenses and all expenses,
+      // and store the resulting file path
+      const filePath = await generateBalanceSheet(userExpenses, allExpenses);
+
+      // Send the generated balance sheet as a downloadable file to the client
+      res.download(filePath);
+    } catch (error) {
+      // Return a 500 status with a generic server error message if an exception occurs
+      return res
+        .status(500)
+        .json({ message: "Server error: Unable to retrieve balance sheet." });
     }
   }
 }

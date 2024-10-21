@@ -11,5 +11,10 @@ router.get(
   expenseController.getIndividualExpense
 );
 router.get("/overallExpense", authUser, expenseController.getOverallExpenses);
+router.get(
+  "/downloadBalanceSheet",
+  authUser,
+  expenseController.getBalanceSheet
+);
 
 export default router;
