@@ -10,171 +10,157 @@ class ExpenseController {
     const { email } = (<any>req).user;
 
     try {
-      // Find the user by their email in the database
-      const user = await prisma.user.findUnique({ where: { email } });
+      // Use a single transaction with callback
+      await prisma.$transaction(async (prisma) => {
+        // Find the user by their email in the database
+        const user = await prisma.user.findUnique({ where: { email } });
 
-      // If user not found, send an error response
-      if (!user) {
-        return res
-          .status(404)
-          .json({ message: "User not found. Please register first." });
-      }
+        if (!user) {
+          throw new Error("User not found. Please register first.");
+        }
 
-      // Destructure relevant fields from the request body
-      const {
-        splitMethod,
-        totalAmount,
-        noOfUser,
-        users,
-        exact_amount,
-        percentage,
-      } = req.body;
+        // Destructure relevant fields from the request body
+        const {
+          splitMethod,
+          totalAmount,
+          noOfUser,
+          users,
+          exact_amount,
+          percentage,
+        } = req.body;
 
-      // Validate if the number of users matches the provided list of users
-      if (noOfUser !== users.length + 1) {
-        return res.status(400).json({
-          message: "Number of users does not match the provided users list.",
+        // Validate if the number of users matches the provided list of users
+        if (noOfUser !== users.length + 1) {
+          throw new Error(
+            "Number of users does not match the provided users list."
+          );
+        }
+
+        // Create the expense in the database
+        const expense = await prisma.expense.create({
+          data: {
+            total_amount: totalAmount,
+            split_method: splitMethod,
+            user_id: user.id,
+          },
         });
-      }
 
-      // Create the expense in the database
-      const expense = await prisma.expense.create({
-        data: {
-          total_amount: totalAmount,
-          split_method: splitMethod,
-          user_id: user.id,
-        },
-      });
-
-      // If the expense creation fails, send an error response
-      if (!expense) {
-        return res.status(500).json({
-          message: "Failed to create the expense. Please try again later.",
+        // Find all users in the list of provided users' emails
+        const existingUsers = await prisma.user.findMany({
+          where: { email: { in: users.map((u: any) => u.email || u) } },
         });
-      }
 
-      let userExpenses: any = [];
+        if (existingUsers.length !== users.length) {
+          throw new Error(
+            "One or more users not found. Please check their emails."
+          );
+        }
 
-      // Find all users in the list of provided users' emails
-      const existingUsers = await prisma.user.findMany({
-        where: { email: { in: users.map((u: any) => u.email || u) } },
-      });
+        let userExpenses: {
+          expense_id: number;
+          user_id: number;
+          amount: number;
+          percentage: number;
+          exact_amount: number;
+        }[] = [];
 
-      // If any user is not found, send an error response
-      if (existingUsers.length !== users.length) {
-        return res.status(404).json({
-          message: "One or more users not found. Please check their emails.",
-        });
-      }
+        // Handle the expense splitting based on the chosen split method
+        if (splitMethod === "EQUAL") {
+          const splitAmount = totalAmount / noOfUser;
+          userExpenses = existingUsers.map((u) => ({
+            expense_id: expense.id,
+            user_id: u.id,
+            amount: splitAmount,
+            percentage: 100 / noOfUser,
+            exact_amount: splitAmount,
+          }));
 
-      // Handle the expense splitting based on the chosen split method
-      if (splitMethod === "EQUAL") {
-        // Equal split: Each user gets an equal share of the total amount
-        const splitAmount = totalAmount / noOfUser;
-        userExpenses = existingUsers.map((u) => ({
-          expense_id: expense.id,
-          user_id: u.id,
-          amount: splitAmount,
-          percentage: 100 / noOfUser,
-          exact_amount: splitAmount,
-        }));
+          // Add the current user (who created the expense) to the split
+          userExpenses.push({
+            expense_id: expense.id,
+            user_id: user.id,
+            amount: splitAmount,
+            percentage: 100 / noOfUser,
+            exact_amount: splitAmount,
+          });
+        } else if (splitMethod === "EXACT") {
+          const totalExactAmount = users.reduce(
+            (sum: number, u: any) => sum + u.exact_amount,
+            0
+          );
 
-        // Add the current user (who created the expense) to the split as well
-        userExpenses.push({
-          expense_id: expense.id,
-          user_id: user.id,
-          amount: splitAmount,
-          percentage: 100 / noOfUser,
-          exact_amount: splitAmount,
-        });
-      } else if (splitMethod === "EXACT") {
-        // Exact split: Each user contributes an exact amount
-        const totalExactAmount = users.reduce(
-          (sum: number, u: any) => sum + u.exact_amount,
-          0
-        );
+          if (totalExactAmount + exact_amount !== totalAmount) {
+            throw new Error(
+              "Total of exact amounts does not match the total expense amount."
+            );
+          }
 
-        // Validate if the sum of exact amounts equals the total amount
-        if (totalExactAmount + exact_amount !== totalAmount) {
-          return res.status(400).json({
-            message:
-              "Total of exact amounts does not match the total expense amount.",
+          userExpenses = existingUsers.map((existingUser) => {
+            const userExpense = users.find(
+              (u: any) => u.email === existingUser.email
+            );
+            return {
+              expense_id: expense.id,
+              user_id: existingUser.id,
+              exact_amount: userExpense.exact_amount,
+              amount: userExpense.exact_amount,
+              percentage: (userExpense.exact_amount / totalAmount) * 100,
+            };
+          });
+
+          userExpenses.push({
+            expense_id: expense.id,
+            user_id: user.id,
+            exact_amount: totalAmount - totalExactAmount,
+            amount: totalAmount - totalExactAmount,
+            percentage: ((totalAmount - totalExactAmount) / totalAmount) * 100,
+          });
+        } else if (splitMethod === "PERCENTAGE") {
+          const totalPercentage = users.reduce(
+            (sum: number, u: any) => sum + u.percentage,
+            0
+          );
+
+          if (totalPercentage + percentage !== 100) {
+            throw new Error("Total of percentages does not equal 100%.");
+          }
+
+          userExpenses = existingUsers.map((existingUser) => {
+            const userExpense = users.find(
+              (u: any) => u.email === existingUser.email
+            );
+            return {
+              expense_id: expense.id,
+              user_id: existingUser.id,
+              exact_amount: (totalAmount * userExpense.percentage) / 100,
+              amount: (totalAmount * userExpense.percentage) / 100,
+              percentage: userExpense.percentage,
+            };
+          });
+
+          userExpenses.push({
+            expense_id: expense.id,
+            user_id: user.id,
+            exact_amount: (totalAmount * (100 - totalPercentage)) / 100,
+            amount: (totalAmount * (100 - totalPercentage)) / 100,
+            percentage: 100 - totalPercentage,
           });
         }
 
-        // Map each user's contribution to the expense
-        userExpenses = existingUsers.map((existingUser) => {
-          const userExpense = users.find(
-            (u: any) => u.email === existingUser.email
-          );
-          return {
-            expense_id: expense.id,
-            user_id: existingUser.id,
-            exact_amount: userExpense.exact_amount,
-            amount: userExpense.exact_amount,
-            percentage: (userExpense.exact_amount / totalAmount) * 100,
-          };
+        // Insert all user expense records into the database
+        await prisma.userExpense.createMany({ data: userExpenses });
+
+        // Return a success response with the created expense and user shares
+        return res.status(201).json({
+          message: "Expense and user shares added successfully!",
+          data: { expense, userExpenses },
         });
-
-        // Add the remaining amount to the current user
-        userExpenses.push({
-          expense_id: expense.id,
-          user_id: user.id,
-          exact_amount: totalAmount - totalExactAmount,
-          amount: totalAmount - totalExactAmount,
-          percentage: ((totalAmount - totalExactAmount) / totalAmount) * 100,
-        });
-      } else if (splitMethod === "PERCENTAGE") {
-        // Percentage split: Each user contributes based on a percentage
-        const totalPercentage = users.reduce(
-          (sum: number, u: any) => sum + u.percentage,
-          0
-        );
-
-        // Validate if the total percentage equals 100%
-        if (totalPercentage + percentage !== 100) {
-          return res
-            .status(400)
-            .json({ message: "Total of percentages does not equal 100%." });
-        }
-
-        // Map each user's contribution based on their percentage
-        userExpenses = existingUsers.map((existingUser) => {
-          const userExpense = users.find(
-            (u: any) => u.email === existingUser.email
-          );
-          return {
-            expense_id: expense.id,
-            user_id: existingUser.id,
-            exact_amount: (totalAmount * userExpense.percentage) / 100,
-            amount: (totalAmount * userExpense.percentage) / 100,
-            percentage: userExpense.percentage,
-          };
-        });
-
-        // Add the remaining percentage contribution to the current user
-        userExpenses.push({
-          expense_id: expense.id,
-          user_id: user.id,
-          exact_amount: (totalAmount * (100 - totalPercentage)) / 100,
-          amount: (totalAmount * (100 - totalPercentage)) / 100,
-          percentage: 100 - totalPercentage,
-        });
-      }
-
-      // Insert all user expense records into the database
-      await prisma.userExpense.createMany({ data: userExpenses });
-
-      // Return a success response with the created expense and user shares
-      return res.status(201).json({
-        message: "Expense and user shares added successfully!",
-        data: { expense, userExpenses },
       });
     } catch (error) {
-      // return a generic server error response
-      return res
-        .status(500)
-        .json({ message: "Server error: Unable to add expense." });
+      // Return an error response with the original error message
+      return res.status(500).json({
+        message: "Server error: Unable to add expense.",
+      });
     }
   }
 
@@ -215,6 +201,73 @@ class ExpenseController {
       return res
         .status(500)
         .json({ message: "Server error: Unable to get individual expense." });
+    }
+  }
+
+  async getOverallExpenses(req: Request, res: Response): Promise<any> {
+    // Extract user email from the authenticated request
+    const { email } = (<any>req).user;
+
+    try {
+      // Find the user by their email in the database
+      const user = await prisma.user.findUnique({ where: { email } });
+
+      // If user not found, send an error response
+      if (!user) {
+        return res
+          .status(404)
+          .json({ message: "User not found. Please register first." });
+      }
+
+      // Find all expense records associated with the authenticated user
+      const overallExpenses = await prisma.user.findUnique({
+        where: { email },
+        include: {
+          UserExpense: {
+            include: {
+              expense: true,
+            },
+          },
+        },
+      });
+
+      // If no user expenses are found, send an error response
+      if (!overallExpenses || overallExpenses.UserExpense.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "No expenses found for the user." });
+      }
+
+      // Calculate total paid and total owed for the user
+      let totalPaid = 0;
+      let totalOwed = 0;
+
+      overallExpenses.UserExpense.forEach((userExpense) => {
+        if (userExpense.expense.user_id === user.id) {
+          totalPaid += userExpense.exact_amount;
+        } else {
+          totalOwed += userExpense.exact_amount;
+        }
+      });
+
+      // Prepare the balance details for the user
+      const balance = {
+        user: user.email,
+        totalPaid,
+        totalOwed,
+        balance: totalPaid - totalOwed,
+      };
+
+      // Return a success response with the user's expense records
+      return res.status(200).json({
+        message: "User expense records retrieved successfully.",
+        data: { balance },
+      });
+    } catch (error) {
+      // Return a generic server error response
+      return res
+        .status(500)
+        .json({ message: "Server error: Unable to retrieve user expenses." });
     }
   }
 }
