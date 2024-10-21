@@ -171,11 +171,50 @@ class ExpenseController {
         data: { expense, userExpenses },
       });
     } catch (error) {
-      // Log any errors and return a generic server error response
-      console.error("Error adding expense:", error);
+      // return a generic server error response
       return res
         .status(500)
         .json({ message: "Server error: Unable to add expense." });
+    }
+  }
+
+  async getIndividualExpense(req: Request, res: Response): Promise<any> {
+    // Extract user email from the authenticated request
+    const { email } = (<any>req).user;
+
+    try {
+      // Find the user by their email in the database
+      const user = await prisma.user.findUnique({ where: { email } });
+
+      // If user not found, send an error response
+      if (!user) {
+        return res
+          .status(404)
+          .json({ message: "User not found. Please register first." });
+      }
+
+      // Find all user expense records in the database
+      const userExpenses = await prisma.userExpense.findMany({
+        where: { user_id: user.id },
+      });
+
+      // If no user expenses are found, send an error response
+      if (!userExpenses || userExpenses.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "No expenses found for the user." });
+      }
+
+      // Return a success response with the user's expense records
+      return res.status(200).json({
+        message: "User expense records retrieved successfully!",
+        data: { userExpenses },
+      });
+    } catch (error) {
+      // return a generic server error response
+      return res
+        .status(500)
+        .json({ message: "Server error: Unable to get individual expense." });
     }
   }
 }
