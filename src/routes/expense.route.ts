@@ -1,10 +1,16 @@
 import { Router } from "express";
 import authUser from "../middlewares/auth.middleware";
 import expenseController from "../controllers/expense.controller";
+import expenseSchema from "../schemas/expense.schema";
 
 const router = Router();
 
-router.post("/addExpense", authUser, expenseController.addExpense);
+router.post(
+  "/addExpense",
+  expenseSchema.addExpenseValidator,
+  authUser,
+  expenseController.addExpense
+);
 router.get(
   "/individualExpense",
   authUser,

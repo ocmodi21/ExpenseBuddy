@@ -23,15 +23,15 @@ class ExpenseController {
         // Destructure relevant fields from the request body
         const {
           splitMethod,
-          totalAmount,
-          noOfUser,
+          amount,
+          users_count,
           users,
           exact_amount,
           percentage,
         } = req.body;
 
         // Validate if the number of users matches the provided list of users
-        if (noOfUser !== users.length + 1) {
+        if (users_count !== users.length + 1) {
           throw new Error(
             "Number of users does not match the provided users list."
           );
@@ -40,7 +40,7 @@ class ExpenseController {
         // Create the expense in the database
         const expense = await prisma.expense.create({
           data: {
-            total_amount: totalAmount,
+            total_amount: amount,
             split_method: splitMethod,
             user_id: user.id,
           },
@@ -67,12 +67,12 @@ class ExpenseController {
 
         // Handle the expense splitting based on the chosen split method
         if (splitMethod === "EQUAL") {
-          const splitAmount = totalAmount / noOfUser;
+          const splitAmount = amount / users_count;
           userExpenses = existingUsers.map((u) => ({
             expense_id: expense.id,
             user_id: u.id,
             amount: splitAmount,
-            percentage: 100 / noOfUser,
+            percentage: 100 / users_count,
             exact_amount: splitAmount,
           }));
 
@@ -81,7 +81,7 @@ class ExpenseController {
             expense_id: expense.id,
             user_id: user.id,
             amount: splitAmount,
-            percentage: 100 / noOfUser,
+            percentage: 100 / users_count,
             exact_amount: splitAmount,
           });
         } else if (splitMethod === "EXACT") {
@@ -90,7 +90,7 @@ class ExpenseController {
             0
           );
 
-          if (totalExactAmount + exact_amount !== totalAmount) {
+          if (totalExactAmount + exact_amount !== amount) {
             throw new Error(
               "Total of exact amounts does not match the total expense amount."
             );
@@ -105,16 +105,16 @@ class ExpenseController {
               user_id: existingUser.id,
               exact_amount: userExpense.exact_amount,
               amount: userExpense.exact_amount,
-              percentage: (userExpense.exact_amount / totalAmount) * 100,
+              percentage: (userExpense.exact_amount / amount) * 100,
             };
           });
 
           userExpenses.push({
             expense_id: expense.id,
             user_id: user.id,
-            exact_amount: totalAmount - totalExactAmount,
-            amount: totalAmount - totalExactAmount,
-            percentage: ((totalAmount - totalExactAmount) / totalAmount) * 100,
+            exact_amount: amount - totalExactAmount,
+            amount: amount - totalExactAmount,
+            percentage: ((amount - totalExactAmount) / amount) * 100,
           });
         } else if (splitMethod === "PERCENTAGE") {
           const totalPercentage = users.reduce(
@@ -133,8 +133,8 @@ class ExpenseController {
             return {
               expense_id: expense.id,
               user_id: existingUser.id,
-              exact_amount: (totalAmount * userExpense.percentage) / 100,
-              amount: (totalAmount * userExpense.percentage) / 100,
+              exact_amount: (amount * userExpense.percentage) / 100,
+              amount: (amount * userExpense.percentage) / 100,
               percentage: userExpense.percentage,
             };
           });
@@ -142,8 +142,8 @@ class ExpenseController {
           userExpenses.push({
             expense_id: expense.id,
             user_id: user.id,
-            exact_amount: (totalAmount * (100 - totalPercentage)) / 100,
-            amount: (totalAmount * (100 - totalPercentage)) / 100,
+            exact_amount: (amount * (100 - totalPercentage)) / 100,
+            amount: (amount * (100 - totalPercentage)) / 100,
             percentage: 100 - totalPercentage,
           });
         }
