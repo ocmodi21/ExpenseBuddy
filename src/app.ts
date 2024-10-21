@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 
 import logger from "./middlewares/logger/logger";
 import userRoutes from "./routes/user.route";
+import expenseRoutes from "./routes/expense.route";
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ app.use(logger);
 
 // api
 app.use("/api/v1/user", userRoutes);
+app.use("/api/v1/expense", expenseRoutes);
 
 const port = process.env.PORT || 3000;
 
